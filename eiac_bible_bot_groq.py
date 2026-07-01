@@ -189,10 +189,9 @@ def ask_groq(chat_id: int, user_text: str) -> str:
         messages=messages,
         temperature=0.6,
         max_tokens=1024,
-        extra_body={"thinking": {"type": "disabled"}},
     )
     reply = completion.choices[0].message.content.strip()
-    # Strip any Qwen 3 <think>...</think> blocks that may appear in the output
+    # Strip any <think>...</think> blocks Qwen may include
     reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
 
     history.append({"role": "assistant", "content": reply})
