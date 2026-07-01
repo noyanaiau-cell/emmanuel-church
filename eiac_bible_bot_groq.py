@@ -24,6 +24,7 @@ The bot keeps running as long as this script runs. Stop it with Ctrl+C.
 
 import logging
 import os
+import re
 import sys
 
 from groq import Groq
@@ -44,8 +45,10 @@ from telegram.ext import (
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-# Llama 3.3 70B on Groq — free, fast, multilingual (knows English + Farsi well).
-MODEL = "llama-3.3-70b-versatile"
+# Qwen 3 32B on Groq — best free model for Persian/Farsi on Groq.
+# Qwen (Alibaba) is trained on extensive Arabic-script data including Farsi,
+# making it significantly more accurate than Llama for Persian Bible study.
+MODEL = "qwen/qwen3-32b"
 
 # How many past messages (user + assistant combined) to keep per user.
 # Keeps context useful while staying well within the model's token budget.
@@ -65,6 +68,7 @@ logger = logging.getLogger("eiac-bible-bot")
 # --------------------------------------------------------------------------- #
 
 SYSTEM_PROMPT = """\
+/no_think
 You are the Bible Study companion for Emmanuel Iranian Anglican Church (EIAC),
 an Anglican church serving the Iranian and Persian community. You help people
 explore the Bible with warmth, depth, and pastoral care.
@@ -186,8 +190,11 @@ def ask_groq(chat_id: int, user_text: str) -> str:
         messages=messages,
         temperature=0.6,
         max_tokens=1024,
+        extra_body={"thinking": {"type": "disabled"}},
     )
     reply = completion.choices[0].message.content.strip()
+    # Strip any Qwen 3 <think>...</think> blocks that may appear in the output
+    reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
 
     history.append({"role": "assistant", "content": reply})
     _trim_history(chat_id)
