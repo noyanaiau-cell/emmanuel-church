@@ -45,9 +45,9 @@ from telegram.ext import (
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-# Qwen 3.6 27B on Groq — free tier, supports 201 languages including Persian/Farsi.
-# Replaces qwen/qwen3-32b which was deprecated by Groq on 2026-06-17.
-MODEL = "qwen/qwen3.6-27b"
+# Llama 3.3 70B on Groq — free tier, no thinking mode, solid Persian/Farsi support.
+# Qwen models on Groq output only <think> tags with no actual reply — unusable.
+MODEL = "llama-3.3-70b-versatile"
 
 # How many past messages (user + assistant combined) to keep per user.
 # Keeps context useful while staying well within the model's token budget.
@@ -67,7 +67,6 @@ logger = logging.getLogger("eiac-bible-bot")
 # --------------------------------------------------------------------------- #
 
 SYSTEM_PROMPT = """\
-/no_think
 You are the Bible Study companion for Emmanuel Iranian Anglican Church (EIAC),
 an Anglican church serving the Iranian and Persian community. You help people
 explore the Bible with warmth, depth, and pastoral care.
@@ -288,7 +287,6 @@ def _build_prompt(user_text: str) -> str:
 
     if len(words) <= 3:
         return (
-            f"/no_think\n"
             f"The user sent a very short message: '{user_text}'\n"
             f"This appears to be a Bible keyword or topic search.\n"
             f"IMPORTANT: Reply ONLY in {lang}. Do NOT use Chinese, Japanese, "
@@ -297,7 +295,7 @@ def _build_prompt(user_text: str) -> str:
             f"acknowledge the word, list 3-5 Bible references with one-line descriptions, "
             f"then ask which one the user wants to explore."
         )
-    return f"/no_think\n{user_text}"
+    return user_text
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
