@@ -191,8 +191,9 @@ def ask_groq(chat_id: int, user_text: str) -> str:
         max_tokens=1024,
     )
     reply = completion.choices[0].message.content.strip()
-    # Strip any <think>...</think> blocks Qwen may include
-    reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL).strip()
+    # Strip Qwen thinking blocks — handle both closed and unclosed tags
+    reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL)
+    reply = re.sub(r"<think>.*", "", reply, flags=re.DOTALL).strip()
 
     history.append({"role": "assistant", "content": reply})
     _trim_history(chat_id)
@@ -282,16 +283,12 @@ def _is_farsi(text: str) -> bool:
 
 
 def _build_prompt(user_text: str) -> str:
-    """
-    Wrap short single-word queries with an explicit language instruction so the
-    model never defaults to Chinese or mixes scripts.
-    """
     words = user_text.strip().split()
     lang = "Farsi/Persian" if _is_farsi(user_text) else "English"
 
     if len(words) <= 3:
-        # Single keyword — guide the model explicitly
         return (
+            f"/no_think\n"
             f"The user sent a very short message: '{user_text}'\n"
             f"This appears to be a Bible keyword or topic search.\n"
             f"IMPORTANT: Reply ONLY in {lang}. Do NOT use Chinese, Japanese, "
@@ -300,7 +297,7 @@ def _build_prompt(user_text: str) -> str:
             f"acknowledge the word, list 3-5 Bible references with one-line descriptions, "
             f"then ask which one the user wants to explore."
         )
-    return user_text
+    return f"/no_think\n{user_text}"
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
