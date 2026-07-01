@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: eiac-bible-bot
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python eiac_bible_bot_groq.py
+    envVars:
+      - key: TELEGRAM_TOKEN
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false

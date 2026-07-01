@@ -26,6 +26,8 @@ import logging
 import os
 import re
 import sys
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from groq import Groq
 from telegram import Update
@@ -324,6 +326,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 
 # --------------------------------------------------------------------------- #
+# Health-check server (keeps Render's free web-service tier from sleeping)
+# --------------------------------------------------------------------------- #
+
+class _HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self) -> None:  # noqa: N802 — required method name
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"EIAC Bible Bot is running")
+
+    def log_message(self, format: str, *args) -> None:  # noqa: A002 — silence access logs
+        pass
+
+
+def _start_health_server() -> None:
+    port = int(os.environ.get("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), _HealthHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    logger.info("Health-check server listening on port %s", port)
+
+
+# --------------------------------------------------------------------------- #
 # Entry point
 # --------------------------------------------------------------------------- #
 
@@ -347,6 +371,11 @@ def main() -> None:
         sys.exit(1)
 
     groq_client = Groq(api_key=GROQ_API_KEY)
+
+    # Render's free tier only keeps "web services" alive, so we expose a tiny
+    # health-check endpoint on a background thread. An external pinger hitting
+    # this URL every few minutes keeps the container (and the bot) awake 24/7.
+    _start_health_server()
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
 
