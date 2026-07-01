@@ -45,10 +45,9 @@ from telegram.ext import (
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-# Qwen 3 32B on Groq — best free model for Persian/Farsi on Groq.
-# Qwen (Alibaba) is trained on extensive Arabic-script data including Farsi,
-# making it significantly more accurate than Llama for Persian Bible study.
-MODEL = "qwen/qwen3-32b"
+# Qwen 3.6 27B on Groq — free tier, supports 201 languages including Persian/Farsi.
+# Replaces qwen/qwen3-32b which was deprecated by Groq on 2026-06-17.
+MODEL = "qwen/qwen3.6-27b"
 
 # How many past messages (user + assistant combined) to keep per user.
 # Keeps context useful while staying well within the model's token budget.
