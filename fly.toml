@@ -1,0 +1,11 @@
+app = "eiac-bible-bot"
+primary_region = "syd"
+
+[build]
+
+[processes]
+  worker = "python eiac_bible_bot_groq.py"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

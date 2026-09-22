@@ -1,7 +1,7 @@
 # EIAC Bible Study Bot
 
 Bilingual (English + Farsi) Bible-study Telegram bot for Emmanuel Iranian Anglican Church.
-Powered by Groq + Llama 3.3 70B — completely free.
+Powered by Groq — completely free. Model list lives in `MODELS` in the bot script; the first one Groq still serves is used.
 
 ## Files
 

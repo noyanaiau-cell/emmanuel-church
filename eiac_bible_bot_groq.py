@@ -4,8 +4,8 @@ EIAC Bible Study Bot — Telegram
 A bilingual (English + Farsi/Persian) Bible-study companion for
 Emmanuel Iranian Anglican Church (EIAC).
 
-Powered by Groq + Llama 3.3 70B (free). Uses long-polling, so it works
-anywhere you can run Python — no public server or webhook needed.
+Powered by Groq (free tier). Uses long-polling, so it works anywhere you
+can run Python — no public server or webhook needed.
 
 Setup
 -----
@@ -47,9 +47,22 @@ from telegram.ext import (
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
-# Llama 3.3 70B on Groq — free tier, no thinking mode, solid Persian/Farsi support.
-# Qwen models on Groq output only <think> tags with no actual reply — unusable.
-MODEL = "llama-3.3-70b-versatile"
+# Groq retires models with little notice — qwen3-32b and then
+# llama-3.3-70b-versatile were both pulled out from under this bot. So the
+# model is a list tried in order, and a retired one is skipped automatically
+# instead of taking the whole bot down.
+#
+# qwen3.8-27b leads: of what Groq hosts today it writes the most natural
+# Farsi, holds a warm pastoral register, and answers in plain prose. The
+# gpt-oss models reply in Markdown tables, which are unreadable in a
+# plain-text Telegram message. The old Qwen <think>-tag problem is gone in
+# this generation.
+MODELS = [
+    "qwen/qwen3.8-27b",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+]
+_active_model = MODELS[0]
 
 # How many past messages (user + assistant combined) to keep per user.
 # Keeps context useful while staying well within the model's token budget.
@@ -87,6 +100,10 @@ SCRIPT & LANGUAGE RULES — follow these exactly
    - A single word in English = reply in English.
    - Never mix the two languages in a single reply.
    - Never switch language unless the very next user message uses the other language.
+4. When replying in Farsi, write EVERY name in Persian script — people, places
+   and books of the Bible alike (Nicodemus -> نیقودیموس, Corinthians -> قرنتیان).
+   Never leave Latin letters inside a Farsi word. If it helps the reader, the
+   English spelling may follow in brackets, but the Persian form comes first.
 
 ═══════════════════════════════════════════════
 HANDLING A SINGLE WORD OR VERY SHORT MESSAGE
@@ -177,6 +194,80 @@ def _trim_history(chat_id: int) -> None:
         conversations[chat_id] = history[-MAX_HISTORY_MESSAGES:]
 
 
+def _model_retired(exc: Exception) -> bool:
+    """True when Groq rejected the call because the model no longer exists."""
+    text = str(exc).lower()
+    return any(
+        marker in text
+        for marker in ("model_not_found", "does not exist", "decommission", "deprecat")
+    )
+
+
+def pick_model() -> None:
+    """Ask Groq which of our models it still serves, and settle on the best one.
+
+    Done once at startup so a retirement costs a single request here rather
+    than a failed call (and its retries) on the first person who says hello.
+    """
+    global _active_model
+    try:
+        live = {m.id for m in groq_client.models.list().data}
+    except Exception:  # noqa: BLE001 — a probe failure must not stop the bot
+        logger.warning("Could not list Groq models; falling back at call time.")
+        return
+
+    for model in MODELS:
+        if model in live:
+            if model != MODELS[0]:
+                logger.warning(
+                    "%s is no longer served by Groq — using %s instead.",
+                    MODELS[0], model,
+                )
+            _active_model = model
+            return
+
+    logger.error(
+        "Groq serves none of %s. Pick a replacement from this list and update "
+        "MODELS: %s", MODELS, ", ".join(sorted(live)),
+    )
+
+
+def _complete(messages: list[dict[str, str]]) -> str:
+    """Ask Groq, stepping past any model it has retired since the last run."""
+    global _active_model
+
+    order = [_active_model] + [m for m in MODELS if m != _active_model]
+    last_error: Exception | None = None
+
+    for model in order:
+        try:
+            # A retired model returns 404, which the SDK would otherwise retry
+            # with a long backoff before we ever get to the next candidate.
+            completion = groq_client.with_options(max_retries=1).chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=0.6,
+                max_tokens=1024,
+            )
+        except Exception as exc:  # noqa: BLE001 — re-raised unless it is a dead model
+            if not _model_retired(exc):
+                raise
+            logger.warning("Groq no longer serves %s — trying the next model", model)
+            last_error = exc
+            continue
+
+        if model != _active_model:
+            logger.warning("Model switched: %s -> %s", _active_model, model)
+            _active_model = model
+        # Reasoning models can return None content alongside a `reasoning` field.
+        return (completion.choices[0].message.content or "").strip()
+
+    raise RuntimeError(
+        "Groq is serving none of the models in MODELS — the list needs updating. "
+        f"Last error: {last_error}"
+    )
+
+
 def ask_groq(chat_id: int, user_text: str) -> str:
     """Send the conversation (system + history + new message) to Groq."""
     history = conversations.setdefault(chat_id, [])
@@ -185,13 +276,7 @@ def ask_groq(chat_id: int, user_text: str) -> str:
 
     messages = [{"role": "system", "content": SYSTEM_PROMPT}] + conversations[chat_id]
 
-    completion = groq_client.chat.completions.create(
-        model=MODEL,
-        messages=messages,
-        temperature=0.6,
-        max_tokens=1024,
-    )
-    reply = completion.choices[0].message.content.strip()
+    reply = _complete(messages)
     # Strip Qwen thinking blocks — handle both closed and unclosed tags
     reply = re.sub(r"<think>.*?</think>", "", reply, flags=re.DOTALL)
     reply = re.sub(r"<think>.*", "", reply, flags=re.DOTALL).strip()
@@ -371,6 +456,7 @@ def main() -> None:
         sys.exit(1)
 
     groq_client = Groq(api_key=GROQ_API_KEY)
+    pick_model()
 
     # Render's free tier only keeps "web services" alive, so we expose a tiny
     # health-check endpoint on a background thread. An external pinger hitting
@@ -386,6 +472,8 @@ def main() -> None:
     app.add_handler(CommandHandler("about", about))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
+    logger.info("Model: %s (fallbacks: %s)", _active_model,
+                ", ".join(m for m in MODELS if m != _active_model))
     logger.info("EIAC Bible Bot is starting (polling)... Press Ctrl+C to stop.")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 

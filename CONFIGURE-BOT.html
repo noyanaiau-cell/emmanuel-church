@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EIAC Bible Bot — Setup Helper</title>
+<style>
+  :root {
+    --bg: #1a1a1a; --surface: #242424; --surface2: #2e2e2e;
+    --border: #3a3a3a; --crimson: #c0392b; --crimson-dk: #96281b;
+    --green: #2d8a4e; --white: #f0f0f0; --muted: #888;
+    --ok: #27ae60; --warn: #e67e22;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--white); font-family: 'Segoe UI', sans-serif; padding: 24px 16px; }
+  .wrap { max-width: 640px; margin: 0 auto; }
+
+  h1 { font-size: 1.3rem; margin-bottom: 4px; }
+  .subtitle { color: var(--muted); font-size: .85rem; margin-bottom: 28px; }
+
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 22px 20px; margin-bottom: 20px; }
+  .card h2 { font-size: 1rem; margin-bottom: 6px; }
+  .card p  { font-size: .83rem; color: var(--muted); margin-bottom: 14px; line-height: 1.55; }
+  .card a  { color: var(--crimson); }
+
+  label { display: block; font-size: .83rem; color: var(--muted); margin-bottom: 5px; }
+  input[type=text], input[type=password] {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 8px; padding: 10px 12px; color: var(--white);
+    font-size: .9rem; margin-bottom: 14px; outline: none; font-family: monospace;
+  }
+  input:focus { border-color: var(--crimson); }
+
+  .badge { display: inline-block; font-size: .72rem; border-radius: 4px; padding: 2px 7px; margin-left: 6px; vertical-align: middle; }
+  .ok   { background: #27ae6022; color: var(--ok); border: 1px solid #27ae6044; }
+  .warn { background: #e67e2222; color: var(--warn); border: 1px solid #e67e2244; }
+  .err  { background: #c0392b22; color: var(--crimson); border: 1px solid #c0392b44; }
+
+  .btn { background: var(--crimson); color: #fff; border: none; border-radius: 8px; padding: 10px 18px; font-size: .9rem; font-weight: 600; cursor: pointer; transition: background .15s; }
+  .btn:hover { background: var(--crimson-dk); }
+
+  .snippet-label { font-size: .78rem; color: var(--muted); margin: 14px 0 5px; }
+  .snippet {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px 14px; font-family: monospace; font-size: .82rem;
+    white-space: pre-wrap; word-break: break-all; color: #b2d7ff;
+    position: relative;
+  }
+  .copy-btn {
+    position: absolute; top: 8px; right: 8px;
+    background: var(--surface2); border: 1px solid var(--border);
+    color: var(--muted); border-radius: 5px; padding: 3px 9px; font-size: .72rem;
+    cursor: pointer; transition: color .15s;
+  }
+  .copy-btn:hover { color: var(--white); }
+
+  .step { display: flex; gap: 12px; margin-bottom: 14px; align-items: flex-start; }
+  .step-num { background: var(--crimson); color: #fff; border-radius: 50%; width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; font-size: .8rem; font-weight: 700; flex-shrink: 0; margin-top: 1px; }
+  .step-body { font-size: .87rem; line-height: 1.6; }
+  .step-body strong { color: var(--white); }
+
+  .flag-bar { height: 3px; background: linear-gradient(to right, var(--green) 0 33.3%, #f0f0f0 33.3% 66.6%, var(--crimson) 66.6% 100%); border-radius: 2px; margin-bottom: 24px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>✝️ EIAC Bible Bot — Setup Helper</h1>
+  <p class="subtitle">Enter your keys below to generate ready-to-paste setup commands.</p>
+  <div class="flag-bar"></div>
+
+  <!-- ── Keys ── -->
+  <div class="card">
+    <h2>Your API Keys</h2>
+    <p>
+      <strong>Telegram token</strong> — from <a href="https://t.me/BotFather" target="_blank">@BotFather</a>:
+      send <code>/newbot</code> or <code>/revoke</code> to get a fresh token.<br><br>
+      <strong>Groq key</strong> — free at <a href="https://console.groq.com" target="_blank">console.groq.com</a> → API Keys → Create.
+    </p>
+
+    <label>Telegram Bot Token <span id="tg-badge" class="badge"></span></label>
+    <input type="password" id="tg-token" placeholder="1234567890:AAH3kV9…" oninput="validate()">
+
+    <label>Groq API Key <span id="gr-badge" class="badge"></span></label>
+    <input type="password" id="gr-key" placeholder="gsk_…" oninput="validate()">
+
+    <button class="btn" onclick="generate()">Generate Setup Commands</button>
+  </div>
+
+  <!-- ── Output ── -->
+  <div id="output" style="display:none">
+
+    <!-- Windows / PowerShell -->
+    <div class="card">
+      <h2>🪟 Windows — Run Locally (PowerShell)</h2>
+      <p>Paste these in PowerShell, then <strong>close the window and open a new one</strong> before running the bot. <code>setx</code> saves permanently so you only need to do this once.</p>
+      <div class="step">
+        <div class="step-num">1</div>
+        <div class="step-body"><strong>Save keys as environment variables</strong></div>
+      </div>
+      <div class="snippet" id="win-env"><div class="copy-btn" onclick="copy('win-env')">Copy</div></div>
+
+      <div class="step" style="margin-top:14px">
+        <div class="step-num">2</div>
+        <div class="step-body"><strong>Install dependencies</strong> (only needed once)</div>
+      </div>
+      <div class="snippet" id="win-install"><div class="copy-btn" onclick="copy('win-install')">Copy</div></div>
+
+      <div class="step" style="margin-top:14px">
+        <div class="step-num">3</div>
+        <div class="step-body"><strong>Run the bot</strong> (open a NEW PowerShell window first)</div>
+      </div>
+      <div class="snippet" id="win-run"><div class="copy-btn" onclick="copy('win-run')">Copy</div></div>
+    </div>
+
+    <!-- Railway -->
+    <div class="card">
+      <h2>🚂 Railway.app — 24/7 Cloud Hosting (Free)</h2>
+      <p>
+        Railway keeps the bot running even when your PC is off.
+        Sign up at <a href="https://railway.app" target="_blank">railway.app</a>,
+        create a project from your GitHub repo containing the bot files,
+        then add these environment variables under <strong>Variables</strong>.
+      </p>
+      <p class="snippet-label">Variable name → value (add both in Railway dashboard)</p>
+      <div class="snippet" id="railway-vars"><div class="copy-btn" onclick="copy('railway-vars')">Copy</div></div>
+
+      <div style="margin-top:16px">
+        <div class="step"><div class="step-num">1</div><div class="step-body">Push your <code>eiac-bible-bot/</code> folder to GitHub.</div></div>
+        <div class="step"><div class="step-num">2</div><div class="step-body">On Railway: <strong>New Project → Deploy from GitHub repo</strong> → select the repo.</div></div>
+        <div class="step"><div class="step-num">3</div><div class="step-body">Go to your service → <strong>Variables</strong> → add the two vars above.</div></div>
+        <div class="step"><div class="step-num">4</div><div class="step-body">Railway auto-detects <code>Procfile</code> and starts the bot as a worker. Check <strong>Logs</strong> — you should see "EIAC Bible Bot is starting (polling)…"</div></div>
+        <div class="step"><div class="step-num">5</div><div class="step-body">Message the bot on Telegram to confirm it replies. ✅</div></div>
+      </div>
+    </div>
+
+    <!-- Netlify (website) -->
+    <div class="card">
+      <h2>🌐 Deploy Website Chatbot (Netlify — Free)</h2>
+      <p>The <code>eiac-bible-website.html</code> file is self-contained. No build step needed.</p>
+      <div class="step"><div class="step-num">1</div><div class="step-body">Go to <a href="https://netlify.com" target="_blank">netlify.com</a> and sign in.</div></div>
+      <div class="step"><div class="step-num">2</div><div class="step-body"><strong>Drag and drop</strong> the <code>eiac-bible-website.html</code> file onto the Netlify dashboard.</div></div>
+      <div class="step"><div class="step-num">3</div><div class="step-body">Netlify gives you a free URL instantly (e.g. <em>random-name.netlify.app</em>). Share it with your church members.</div></div>
+      <div class="step"><div class="step-num">4</div><div class="step-body">Users enter their own Groq key when they first open the page (free, one-time setup).</div></div>
+    </div>
+
+  </div><!-- /output -->
+</div>
+
+<script>
+function validate() {
+  const tg = document.getElementById('tg-token').value.trim();
+  const gr = document.getElementById('gr-key').value.trim();
+  const tgBadge = document.getElementById('tg-badge');
+  const grBadge = document.getElementById('gr-badge');
+
+  const tgOk = /^\d{8,12}:[A-Za-z0-9_-]{35}$/.test(tg);
+  const grOk = /^gsk_[A-Za-z0-9]{20,}$/.test(gr);
+
+  tgBadge.className = 'badge ' + (tg.length === 0 ? '' : tgOk ? 'ok' : 'warn');
+  tgBadge.textContent = tg.length === 0 ? '' : tgOk ? '✓ looks good' : '⚠ check format';
+
+  grBadge.className = 'badge ' + (gr.length === 0 ? '' : grOk ? 'ok' : 'warn');
+  grBadge.textContent = gr.length === 0 ? '' : grOk ? '✓ looks good' : '⚠ check format';
+}
+
+function generate() {
+  const tg = document.getElementById('tg-token').value.trim();
+  const gr = document.getElementById('gr-key').value.trim();
+
+  if (!tg || !gr) { alert('Please enter both keys first.'); return; }
+
+  const PYTHON = 'C:\\Users\\noyan\\AppData\\Local\\Programs\\Python\\Python312\\python.exe';
+  const BOT_DIR = 'C:\\Users\\noyan\\OneDrive\\Desktop\\claude code\\eiac-bible-bot';
+
+  document.getElementById('win-env').innerHTML =
+    `<div class="copy-btn" onclick="copy('win-env')">Copy</div>` +
+    `setx TELEGRAM_TOKEN "${tg}"\nsetx GROQ_API_KEY   "${gr}"`;
+
+  document.getElementById('win-install').innerHTML =
+    `<div class="copy-btn" onclick="copy('win-install')">Copy</div>` +
+    `cd "${BOT_DIR}"\n"${PYTHON}" -m pip install -r requirements.txt`;
+
+  document.getElementById('win-run').innerHTML =
+    `<div class="copy-btn" onclick="copy('win-run')">Copy</div>` +
+    `cd "${BOT_DIR}"\n"${PYTHON}" eiac_bible_bot_groq.py`;
+
+  document.getElementById('railway-vars').innerHTML =
+    `<div class="copy-btn" onclick="copy('railway-vars')">Copy</div>` +
+    `TELEGRAM_TOKEN  =  ${tg}\nGROQ_API_KEY    =  ${gr}`;
+
+  document.getElementById('output').style.display = 'block';
+  document.getElementById('output').scrollIntoView({ behavior: 'smooth' });
+}
+
+function copy(id) {
+  const el = document.getElementById(id);
+  const text = el.innerText.replace(/^Copy\n?/, '').trim();
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = el.querySelector('.copy-btn');
+    btn.textContent = 'Copied!';
+    setTimeout(() => btn.textContent = 'Copy', 1500);
+  });
+}
+</script>
+</body>
+</html>

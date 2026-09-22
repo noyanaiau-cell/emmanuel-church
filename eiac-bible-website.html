@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="en" dir="ltr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EIAC Bible Study — Bible Companion | همراه کتاب‌مقدس</title>
+<style>
+  /* ── Design tokens ── */
+  :root {
+    --bg:          #1a1a1a;
+    --surface:     #242424;
+    --surface2:    #2e2e2e;
+    --border:      #3a3a3a;
+    --crimson:     #c0392b;
+    --crimson-dk:  #96281b;
+    --crimson-glow:#e74c3c22;
+    --green:       #2d8a4e;   /* Iranian flag green */
+    --white:       #f5f5f5;
+    --muted:       #888;
+    --user-bg:     #c0392b;
+    --bot-bg:      #2e2e2e;
+    --radius:      14px;
+    --font:        'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--white);
+    font-family: var(--font);
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Header ── */
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-shrink: 0;
+  }
+
+  .logo-mark {
+    width: 48px; height: 48px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--crimson) 0%, var(--crimson-dk) 100%);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px;
+    flex-shrink: 0;
+    box-shadow: 0 0 0 3px #ffffff18;
+  }
+
+  /* Iranian flag stripe accent under logo */
+  .logo-mark::after {
+    content: '';
+    position: absolute;
+  }
+
+  .header-text h1 {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--white);
+    letter-spacing: .3px;
+  }
+  .header-text p {
+    font-size: .78rem;
+    color: var(--muted);
+    margin-top: 1px;
+  }
+
+  /* Iranian flag colour bar */
+  .flag-bar {
+    height: 3px;
+    background: linear-gradient(to right,
+      var(--green) 0 33.3%,
+      var(--white) 33.3% 66.6%,
+      var(--crimson) 66.6% 100%
+    );
+    flex-shrink: 0;
+  }
+
+  /* ── Setup overlay (shown when no key) ── */
+  #setup-overlay {
+    position: fixed; inset: 0;
+    background: #000000cc;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 100;
+    padding: 20px;
+  }
+  #setup-overlay.hidden { display: none; }
+
+  .setup-card {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 28px 24px;
+    width: 100%;
+    max-width: 460px;
+  }
+  .setup-card h2 { font-size: 1.1rem; margin-bottom: 6px; color: var(--white); }
+  .setup-card p  { font-size: .84rem; color: var(--muted); margin-bottom: 18px; line-height: 1.55; }
+  .setup-card a  { color: var(--crimson); }
+
+  .setup-card input {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: var(--white);
+    font-size: .9rem;
+    margin-bottom: 12px;
+    outline: none;
+  }
+  .setup-card input:focus { border-color: var(--crimson); }
+
+  .btn-primary {
+    width: 100%;
+    background: var(--crimson);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 11px;
+    font-size: .95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  .btn-primary:hover { background: var(--crimson-dk); }
+
+  .setup-note {
+    font-size: .75rem;
+    color: var(--muted);
+    margin-top: 10px;
+    text-align: center;
+    line-height: 1.5;
+  }
+
+  /* ── Chat area ── */
+  #chat-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    scroll-behavior: smooth;
+  }
+
+  /* scrollbar */
+  #chat-area::-webkit-scrollbar { width: 5px; }
+  #chat-area::-webkit-scrollbar-track { background: transparent; }
+  #chat-area::-webkit-scrollbar-thumb { background: var(--border); border-radius: 99px; }
+
+  .message {
+    max-width: min(520px, 82%);
+    padding: 11px 14px;
+    border-radius: var(--radius);
+    font-size: .93rem;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .message.bot {
+    background: var(--bot-bg);
+    border: 1px solid var(--border);
+    align-self: flex-start;
+    border-bottom-left-radius: 4px;
+  }
+  .message.user {
+    background: var(--user-bg);
+    align-self: flex-end;
+    border-bottom-right-radius: 4px;
+    color: #fff;
+  }
+  /* RTL for Farsi messages */
+  .message.rtl { direction: rtl; text-align: right; }
+
+  .typing-dot {
+    display: inline-flex; gap: 4px; align-items: center; padding: 4px 2px;
+  }
+  .typing-dot span {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--muted);
+    animation: bounce .9s infinite;
+  }
+  .typing-dot span:nth-child(2) { animation-delay: .2s; }
+  .typing-dot span:nth-child(3) { animation-delay: .4s; }
+
+  @keyframes bounce {
+    0%,80%,100% { transform: translateY(0); }
+    40%          { transform: translateY(-6px); }
+  }
+
+  /* ── Input bar ── */
+  footer {
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 12px 14px;
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+    flex-shrink: 0;
+  }
+
+  #user-input {
+    flex: 1;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    padding: 10px 16px;
+    color: var(--white);
+    font-size: .93rem;
+    resize: none;
+    max-height: 120px;
+    outline: none;
+    line-height: 1.5;
+    transition: border-color .15s;
+    font-family: var(--font);
+  }
+  #user-input:focus { border-color: var(--crimson); }
+  #user-input::placeholder { color: var(--muted); }
+
+  #send-btn {
+    width: 42px; height: 42px; flex-shrink: 0;
+    background: var(--crimson);
+    border: none; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    transition: background .15s, transform .1s;
+  }
+  #send-btn:hover  { background: var(--crimson-dk); }
+  #send-btn:active { transform: scale(.93); }
+  #send-btn svg    { width: 18px; height: 18px; fill: #fff; }
+  #send-btn:disabled { opacity: .45; cursor: not-allowed; }
+
+  /* key badge in corner */
+  #key-badge {
+    position: fixed; bottom: 72px; right: 14px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: .7rem;
+    color: var(--muted);
+    cursor: pointer;
+    z-index: 10;
+    transition: color .15s;
+  }
+  #key-badge:hover { color: var(--white); }
+</style>
+</head>
+<body>
+
+<!-- ── Setup overlay ── -->
+<div id="setup-overlay">
+  <div class="setup-card">
+    <h2>✝️ EIAC Bible Study — Setup</h2>
+    <p>
+      Enter your Groq API key to start. It's free — get one at
+      <a href="https://console.groq.com" target="_blank">console.groq.com</a>
+      under <strong>API Keys</strong>.<br><br>
+      The key is stored only in your browser's memory for this session.
+      <!-- LOGO: to embed the EIAC logo, add an <img> here -->
+    </p>
+    <input type="password" id="key-input" placeholder="gsk_…your-groq-key…" autocomplete="off">
+    <button class="btn-primary" onclick="applyKey()">Start chatting</button>
+    <p class="setup-note">
+      Key is never sent anywhere except directly to Groq's API.<br>
+      Refresh the page to clear it.
+    </p>
+  </div>
+</div>
+
+<!-- ── Header ── -->
+<header>
+  <div class="logo-mark" style="position:relative;">✝️</div>
+  <!-- LOGO: replace the div above with <img src="your-logo.png" width="48" height="48" style="border-radius:50%"> -->
+  <div class="header-text">
+    <h1>EIAC Bible Study Companion</h1>
+    <p>همراه مطالعهٔ کتاب‌مقدس — English &amp; فارسی</p>
+  </div>
+</header>
+<div class="flag-bar"></div>
+
+<!-- ── Chat ── -->
+<div id="chat-area"></div>
+
+<!-- ── Input ── -->
+<footer>
+  <textarea id="user-input" rows="1" placeholder="Ask about a verse, topic, or phrase… | یک آیه یا موضوع بپرسید…"></textarea>
+  <button id="send-btn" onclick="sendMessage()" title="Send">
+    <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+      <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+    </svg>
+  </button>
+</footer>
+
+<div id="key-badge" onclick="resetKey()" title="Change API key">🔑 API key set</div>
+
+<script>
+// ── Config ──────────────────────────────────────────────────────────────────
+const MODEL = 'qwen/qwen3.8-27b';
+const GROQ_ENDPOINT = 'https://api.groq.com/openai/v1/chat/completions';
+
+const SYSTEM_PROMPT = `You are the Bible Study companion for Emmanuel Iranian Anglican Church (EIAC),
+an Anglican church serving the Iranian / Persian community. You help people
+explore the Bible with warmth, depth, and pastoral care.
+
+LANGUAGE — this is very important:
+- Detect the language of the user's message.
+- If the user writes in Persian / Farsi, reply ENTIRELY in natural, fluent Farsi.
+- If the user writes in English, reply ENTIRELY in English.
+- If they mix languages, follow the dominant language of their latest message.
+- Never switch languages unless the user does.
+
+WHEN SOMEONE ASKS ABOUT A VERSE, PHRASE, KEYWORD, OR TOPIC:
+- Identify the relevant Bible verse, even from a partial phrase or a theme.
+- Give the verse IN CONTEXT: quote the verse just BEFORE it, the verse ITSELF,
+  and the verse just AFTER it, each clearly labelled with its reference
+  (e.g. John 3:15 / John 3:16 / John 3:17).
+- Then briefly explain: (1) the historical background / setting, (2) the meaning,
+  and (3) a short, encouraging reflection for daily life.
+- Keep quotations accurate. If you are unsure of the exact wording of a verse,
+  say so honestly rather than inventing text.
+
+TONE & BOUNDARIES:
+- Warm, pastoral, humble, and non-judgmental — in the Anglican tradition.
+- You may share Christian perspective and encouragement, but never pressure,
+  shame, or condemn anyone.
+- For serious personal crises (e.g. self-harm, abuse, deep despair), gently
+  encourage the person to reach out to a pastor, a trusted person, or local
+  emergency / support services, alongside any spiritual encouragement.
+- Keep answers focused and readable. Use short paragraphs.`;
+
+// ── State ───────────────────────────────────────────────────────────────────
+let groqKey = '';
+let history = []; // [{role, content}, …]
+
+// ── Setup ───────────────────────────────────────────────────────────────────
+function applyKey() {
+  const val = document.getElementById('key-input').value.trim();
+  if (!val.startsWith('gsk_') || val.length < 20) {
+    alert('That doesn\'t look like a Groq key (should start with gsk_). Please check and try again.');
+    return;
+  }
+  groqKey = val;
+  document.getElementById('setup-overlay').classList.add('hidden');
+  document.getElementById('key-badge').style.display = 'block';
+  addBotMessage(
+    '✝️ Welcome to the EIAC Bible Study Companion!\n\n' +
+    'I\'m here to help you explore God\'s Word in English or Persian (فارسی).\n\n' +
+    'Ask about a verse (even a partial phrase), a topic, or what a passage means. ' +
+    'I\'ll give you the verse in context — the verse before, the verse itself, and the verse after — ' +
+    'along with its historical background and a short reflection.\n\n' +
+    'به فارسی هم می‌توانید بنویسید — به همان زبانی که می‌نویسید پاسخ می‌دهم. 🙏'
+  );
+}
+
+function resetKey() {
+  if (!confirm('Clear your API key and start over?')) return;
+  groqKey = '';
+  history = [];
+  document.getElementById('chat-area').innerHTML = '';
+  document.getElementById('key-input').value = '';
+  document.getElementById('setup-overlay').classList.remove('hidden');
+  document.getElementById('key-badge').style.display = 'none';
+}
+
+// ── RTL detection (simple heuristic: starts with Arabic/Farsi codepoints) ──
+function isRTL(text) {
+  return /[؀-ۿݐ-ݿ]/.test(text.slice(0, 60));
+}
+
+// ── Chat UI helpers ──────────────────────────────────────────────────────────
+const chatArea = document.getElementById('chat-area');
+
+function addBotMessage(text) {
+  const el = document.createElement('div');
+  el.className = 'message bot' + (isRTL(text) ? ' rtl' : '');
+  el.textContent = text;
+  chatArea.appendChild(el);
+  scrollBottom();
+  return el;
+}
+
+function addUserMessage(text) {
+  const el = document.createElement('div');
+  el.className = 'message user' + (isRTL(text) ? ' rtl' : '');
+  el.textContent = text;
+  chatArea.appendChild(el);
+  scrollBottom();
+}
+
+function addTypingIndicator() {
+  const el = document.createElement('div');
+  el.className = 'message bot';
+  el.id = 'typing';
+  el.innerHTML = '<div class="typing-dot"><span></span><span></span><span></span></div>';
+  chatArea.appendChild(el);
+  scrollBottom();
+  return el;
+}
+
+function scrollBottom() {
+  chatArea.scrollTop = chatArea.scrollHeight;
+}
+
+// ── Auto-resize textarea ─────────────────────────────────────────────────────
+const textarea = document.getElementById('user-input');
+textarea.addEventListener('input', () => {
+  textarea.style.height = 'auto';
+  textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
+});
+textarea.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendMessage();
+  }
+});
+
+// ── Send ─────────────────────────────────────────────────────────────────────
+async function sendMessage() {
+  const text = textarea.value.trim();
+  if (!text || !groqKey) return;
+
+  textarea.value = '';
+  textarea.style.height = 'auto';
+
+  const sendBtn = document.getElementById('send-btn');
+  sendBtn.disabled = true;
+
+  addUserMessage(text);
+  history.push({ role: 'user', content: text });
+  if (history.length > 20) history = history.slice(-20);
+
+  const typing = addTypingIndicator();
+
+  try {
+    const res = await fetch(GROQ_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${groqKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: MODEL,
+        messages: [{ role: 'system', content: SYSTEM_PROMPT }, ...history],
+        temperature: 0.6,
+        max_tokens: 1024,
+      }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err?.error?.message || `HTTP ${res.status}`);
+    }
+
+    const data = await res.json();
+    const reply = data.choices[0].message.content.trim();
+
+    typing.remove();
+    addBotMessage(reply);
+    history.push({ role: 'assistant', content: reply });
+    if (history.length > 20) history = history.slice(-20);
+
+  } catch (err) {
+    typing.remove();
+    const msg = err.message.includes('401')
+      ? 'Invalid API key. Click the 🔑 key badge to update it.'
+      : 'Sorry, I had trouble answering. Please try again.\nمتأسفم، مشکلی پیش آمد. دوباره تلاش کنید.';
+    addBotMessage(msg);
+    console.error(err);
+  } finally {
+    sendBtn.disabled = false;
+    textarea.focus();
+  }
+}
+
+// Hide key badge until a key is set
+document.getElementById('key-badge').style.display = 'none';
+</script>
+</body>
+</html>
