@@ -27,11 +27,14 @@ import os
 import re
 import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+import httpx
 from groq import Groq
 from telegram import Update
 from telegram.constants import ChatAction
+from telegram.error import Conflict
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -63,6 +66,14 @@ MODELS = [
     "openai/gpt-oss-20b",
 ]
 _active_model = MODELS[0]
+
+# Optional: a Telegram chat id that gets told when something breaks. Without
+# it the bot still self-heals, it just does so silently. Set ADMIN_CHAT_ID in
+# the environment to turn alerts on.
+ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID")
+
+# How often the watchdog re-checks that Groq still serves our model.
+HEALTH_CHECK_SECONDS = 600
 
 # How many past messages (user + assistant combined) to keep per user.
 # Keeps context useful while staying well within the model's token budget.
@@ -203,18 +214,71 @@ def _model_retired(exc: Exception) -> bool:
     )
 
 
-def pick_model() -> None:
+def notify_admin(message: str) -> None:
+    """Tell the admin something broke. Silent no-op if ADMIN_CHAT_ID is unset."""
+    if not ADMIN_CHAT_ID:
+        return
+    try:
+        httpx.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={"chat_id": ADMIN_CHAT_ID, "text": f"EIAC Bible Bot: {message}"},
+            timeout=10,
+        )
+    except Exception:  # noqa: BLE001 — an alert failing must never stop the bot
+        logger.exception("Could not reach the admin chat")
+
+
+def _watchdog() -> None:
+    """Re-check Groq on a timer and re-point at a live model if ours vanishes.
+
+    This is the failure that has taken this bot down twice: Groq drops a model,
+    every reply starts failing, and nobody finds out until a person complains.
+    Checking on a timer means the bot repairs itself in the quiet hours instead
+    of in front of the congregation.
+    """
+    consecutive_failures = 0
+
+    while True:
+        time.sleep(HEALTH_CHECK_SECONDS)
+        previous = _active_model
+
+        if pick_model():
+            consecutive_failures = 0
+            if _active_model != previous:
+                logger.warning("Watchdog: %s -> %s", previous, _active_model)
+                notify_admin(
+                    f"Groq retired {previous}. Switched to {_active_model} on "
+                    f"my own — no action needed, but the model list is worth "
+                    f"a look."
+                )
+            continue
+
+        consecutive_failures += 1
+        logger.warning("Watchdog: Groq check failed (%s in a row)", consecutive_failures)
+        # ~30 minutes, then ~2 hours. Enough to ignore a blip, soon enough to act.
+        if consecutive_failures in (3, 12):
+            notify_admin(
+                f"Groq has been unreachable for {consecutive_failures} checks "
+                f"(~{consecutive_failures * HEALTH_CHECK_SECONDS // 60} minutes). "
+                f"People may be getting error replies."
+            )
+
+
+def pick_model() -> bool:
     """Ask Groq which of our models it still serves, and settle on the best one.
 
-    Done once at startup so a retirement costs a single request here rather
-    than a failed call (and its retries) on the first person who says hello.
+    Done at startup, and again every HEALTH_CHECK_SECONDS by the watchdog,
+    so a retirement costs a single request here rather than a failed call
+    (and its retries) on the first person who says hello.
+
+    Returns True if we are pointed at a model Groq will actually serve.
     """
     global _active_model
     try:
         live = {m.id for m in groq_client.models.list().data}
     except Exception:  # noqa: BLE001 — a probe failure must not stop the bot
         logger.warning("Could not list Groq models; falling back at call time.")
-        return
+        return False
 
     for model in MODELS:
         if model in live:
@@ -224,12 +288,17 @@ def pick_model() -> None:
                     MODELS[0], model,
                 )
             _active_model = model
-            return
+            return True
 
     logger.error(
         "Groq serves none of %s. Pick a replacement from this list and update "
         "MODELS: %s", MODELS, ", ".join(sorted(live)),
     )
+    notify_admin(
+        "Groq no longer serves any model this bot knows about. It cannot "
+        "answer anyone until MODELS is updated."
+    )
+    return False
 
 
 def _complete(messages: list[dict[str, str]]) -> str:
@@ -436,6 +505,18 @@ def _start_health_server() -> None:
 # Entry point
 # --------------------------------------------------------------------------- #
 
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Catch anything the handlers did not, so one bad update cannot end the run."""
+    error = context.error
+
+    if isinstance(error, Conflict):
+        # Two containers overlap for a few seconds on every deploy. Normal.
+        logger.warning("Another instance is polling this token; backing off.")
+        return
+
+    logger.error("Unhandled error: %s", error, exc_info=error)
+
+
 def main() -> None:
     global groq_client
 
@@ -471,6 +552,10 @@ def main() -> None:
     app.add_handler(CommandHandler("verse", verse))
     app.add_handler(CommandHandler("about", about))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_error_handler(on_error)
+
+    threading.Thread(target=_watchdog, daemon=True).start()
+    logger.info("Watchdog running: Groq re-checked every %ss", HEALTH_CHECK_SECONDS)
 
     logger.info("Model: %s (fallbacks: %s)", _active_model,
                 ", ".join(m for m in MODELS if m != _active_model))
