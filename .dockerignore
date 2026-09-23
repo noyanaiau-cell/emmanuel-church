@@ -1,0 +1,12 @@
+.git
+.gitignore
+__pycache__/
+*.pyc
+START-BOT.bat
+CONFIGURE-BOT.html
+eiac-bible-website.html
+README.md
+fly.toml
+render.yaml
+Procfile
+events.json

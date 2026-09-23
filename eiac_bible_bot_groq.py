@@ -280,6 +280,16 @@ def save_events(events: list[dict]) -> None:
     )
 
 
+def _runs_indefinitely(event: dict) -> bool:
+    """True for something with no end in sight - a class that just runs.
+
+    Written as "until": "open". It stays on the calendar until someone
+    removes it with /delevent, which is the point: nobody knows yet when
+    the last session will be.
+    """
+    until = event.get("until")
+    return isinstance(until, str) and until.strip().lower() == "open"
+
 def upcoming_events() -> list[dict]:
     """Events still to come, soonest first.
 
@@ -294,6 +304,9 @@ def upcoming_events() -> list[dict]:
         try:
             when = date.fromisoformat(event["date"])
         except (KeyError, ValueError):
+            continue
+        if _runs_indefinitely(event):
+            live.append(event)
             continue
         try:
             last_day = date.fromisoformat(event["until"])
@@ -322,7 +335,11 @@ def describe_event(event: dict, index: int | None = None) -> str:
     if event.get("time"):
         head += f", {event['time']}"
 
-    if event.get("until"):
+    if _runs_indefinitely(event):
+        head = f"ongoing, from {when.strftime('%A %d %B %Y')}"
+        if event.get("time"):
+            head += f" — {event['time']}"
+    elif event.get("until"):
         try:
             ends = date.fromisoformat(event["until"])
             if ends > when:
