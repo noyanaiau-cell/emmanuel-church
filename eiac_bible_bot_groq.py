@@ -221,6 +221,36 @@ WELCOME_FA = (
 # themselves the day after they happen, so nobody has to remember to tidy up.
 # --------------------------------------------------------------------------- #
 
+SEED_PATH = Path(__file__).parent / "seed_events.json"
+
+
+def seed_events() -> None:
+    """Merge any events shipped in the repo into the stored list.
+
+    This is the second way events get in: the office adds them from a phone
+    with /addevent, and a batch of announcements can also arrive by deploy.
+
+    Matching is on title plus date, so redeploying never duplicates anything,
+    and an event added from a phone is never touched or removed by a deploy.
+    """
+    if not SEED_PATH.exists():
+        return
+
+    try:
+        seed = json.loads(SEED_PATH.read_text(encoding="utf8"))
+    except Exception:  # noqa: BLE001 — a bad seed file must not stop the bot
+        logger.exception("Could not read %s", SEED_PATH.name)
+        return
+
+    stored = load_events()
+    known = {(e.get("title"), e.get("date")) for e in stored}
+    fresh = [e for e in seed if (e.get("title"), e.get("date")) not in known]
+
+    if fresh:
+        save_events(stored + fresh)
+        logger.info("Seeded %s event(s) from %s", len(fresh), SEED_PATH.name)
+
+
 def today_at_church() -> date:
     """Today's date in Melbourne, whatever timezone the server thinks it is in."""
     try:
@@ -891,6 +921,7 @@ def main() -> None:
 
     groq_client = Groq(api_key=GROQ_API_KEY)
     pick_model()
+    seed_events()
 
     # Render's free tier only keeps "web services" alive, so we expose a tiny
     # health-check endpoint on a background thread. An external pinger hitting
