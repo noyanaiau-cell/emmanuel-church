@@ -1,5 +1,29 @@
 [
   {
+    "title": "Sunday Service - Reservoir",
+    "date": "2026-09-27",
+    "until": "open",
+    "recurs": "Every Sunday",
+    "time": "10:00 AM",
+    "location": "Reservoir church",
+    "responsible": "",
+    "contact": "",
+    "notes": "Weekly Sunday service at the Reservoir church at 10:00 AM. IMPORTANT: on Sunday 11 October there is no separate Reservoir service - both congregations meet together at Doncaster for the church council election, at a time not yet announced. Sometimes the two congregations meet together in one location instead of holding separate services. Those joint services are announced beforehand - if you are unsure for a particular Sunday, ask at church.",
+    "added_by": "570436622"
+  },
+  {
+    "title": "Sunday Service - Doncaster",
+    "date": "2026-09-27",
+    "until": "open",
+    "recurs": "Every Sunday",
+    "time": "1:30 PM",
+    "location": "Doncaster church",
+    "responsible": "",
+    "contact": "",
+    "notes": "Weekly Sunday service at the Doncaster church at 1:30 PM. Sometimes the two congregations meet together in one location instead of holding separate services. Those joint services are announced beforehand - if you are unsure for a particular Sunday, ask at church.",
+    "added_by": "570436622"
+  },
+  {
     "title": "School Holiday Program",
     "date": "2026-10-01",
     "time": "11:00 AM - 4:00 PM",
@@ -48,7 +72,7 @@
     "location": "Doncaster church (joint service for both congregations)",
     "responsible": "Farzaneh (فرزانه)",
     "contact": "Farzaneh (فرزانه)",
-    "notes": "Voting for the new church council. Collect your voting form from Farzaneh (فرزانه). Completed forms must be handed in by Sunday 4 October at the latest.",
+    "notes": "Voting for the new church council. Collect your voting form from Farzaneh (فرزانه). Completed forms must be handed in by Sunday 4 October at the latest. The TIME of this joint service has NOT been announced - do NOT state a time for it, and do not assume it keeps either congregation's usual hour. Tell people to check at church.",
     "added_by": "570436622"
   },
   {

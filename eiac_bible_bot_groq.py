@@ -335,7 +335,12 @@ def describe_event(event: dict, index: int | None = None) -> str:
     if event.get("time"):
         head += f", {event['time']}"
 
-    if _runs_indefinitely(event):
+    if event.get("recurs"):
+        head = event["recurs"]
+        if event.get("time"):
+            head += f", {event['time']}"
+        head = head.rstrip(", ")
+    elif _runs_indefinitely(event):
         head = f"ongoing, from {when.strftime('%A %d %B %Y')}"
         if event.get("time"):
             head += f" — {event['time']}"
