@@ -26,9 +26,12 @@ import logging
 import os
 import re
 import sys
+import json
 import threading
 import time
+from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 import httpx
 from groq import Groq
@@ -74,6 +77,24 @@ ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID")
 
 # How often the watchdog re-checks that Groq still serves our model.
 HEALTH_CHECK_SECONDS = 600
+
+# The church is in Melbourne; "today" must mean today there, not wherever
+# the server happens to be.
+CHURCH_TZ = "Australia/Melbourne"
+
+# Church events live on a Railway volume mounted at /data so they survive a
+# redeploy. Falls back to the working directory when running on a laptop.
+EVENTS_PATH = Path(os.environ.get("EVENTS_PATH", "/data/events.json"))
+if not EVENTS_PATH.parent.exists():
+    EVENTS_PATH = Path(__file__).parent / "events.json"
+
+# Who may add or remove events. Comma-separated Telegram chat ids. Everyone
+# else can read the list but not change it.
+EVENT_ADMINS = {
+    chat_id.strip()
+    for chat_id in os.environ.get("EVENT_ADMIN_IDS", "").split(",")
+    if chat_id.strip()
+}
 
 # How many past messages (user + assistant combined) to keep per user.
 # Keeps context useful while staying well within the model's token budget.
@@ -186,6 +207,119 @@ WELCOME_FA = (
     "/about — دربارهٔ کلیسا\n\n"
     "برای شروع، کافی است پیامی بفرستید. 🙏"
 )
+
+# --------------------------------------------------------------------------- #
+# Church events
+#
+# A small JSON list kept on a persistent volume. Events drop off the list by
+# themselves the day after they happen, so nobody has to remember to tidy up.
+# --------------------------------------------------------------------------- #
+
+def today_at_church() -> date:
+    """Today's date in Melbourne, whatever timezone the server thinks it is in."""
+    try:
+        from zoneinfo import ZoneInfo
+
+        return datetime.now(ZoneInfo(CHURCH_TZ)).date()
+    except Exception:  # noqa: BLE001 — missing tzdata must not break the bot
+        logger.warning("Timezone data unavailable; falling back to server date.")
+        return date.today()
+
+
+def load_events() -> list[dict]:
+    """Every stored event, including ones that have already happened."""
+    try:
+        return json.loads(EVENTS_PATH.read_text(encoding="utf8"))
+    except FileNotFoundError:
+        return []
+    except Exception:  # noqa: BLE001 — a corrupt file must not take the bot down
+        logger.exception("Could not read %s", EVENTS_PATH)
+        return []
+
+
+def save_events(events: list[dict]) -> None:
+    EVENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    EVENTS_PATH.write_text(
+        json.dumps(events, ensure_ascii=False, indent=2), encoding="utf8"
+    )
+
+
+def upcoming_events() -> list[dict]:
+    """Events still to come, soonest first. An event stays listed all its own day."""
+    today = today_at_church()
+    live = []
+    for event in load_events():
+        try:
+            when = date.fromisoformat(event["date"])
+        except (KeyError, ValueError):
+            continue
+        if when >= today:
+            live.append(event)
+    return sorted(live, key=lambda e: e["date"])
+
+
+def parse_event_date(text: str) -> str | None:
+    """Accept 2026-12-25 or Australian 25/12/2026. Returns ISO form, or None."""
+    text = text.strip()
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d/%m/%y", "%d-%m-%Y"):
+        try:
+            return datetime.strptime(text, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def describe_event(event: dict, index: int | None = None) -> str:
+    """One event rendered as a few readable lines."""
+    when = date.fromisoformat(event["date"])
+    head = when.strftime("%A %d %B %Y")
+    if event.get("time"):
+        head += f", {event['time']}"
+
+    label = f"{index}. " if index is not None else ""
+    lines = [f"{label}{event['title']} — {head}"]
+    if event.get("location"):
+        lines.append(f"   Where: {event['location']}")
+    if event.get("responsible"):
+        lines.append(f"   Run by: {event['responsible']}")
+    if event.get("contact"):
+        lines.append(f"   Contact: {event['contact']}")
+    if event.get("notes"):
+        lines.append(f"   Note: {event['notes']}")
+    return "\n".join(lines)
+
+
+def events_for_prompt() -> str:
+    """The event list as the model should see it, appended to the system prompt.
+
+    Rebuilt on every question rather than cached, so an event added a minute
+    ago is answerable immediately and a finished one disappears on its own.
+    """
+    events = upcoming_events()
+    today = today_at_church().strftime("%A %d %B %Y")
+
+    if not events:
+        return (
+            "\n\n=== CHURCH EVENTS ===\n"
+            f"Today is {today}. There are NO events currently scheduled.\n"
+            "If someone asks about events, say plainly that nothing is on the "
+            "calendar right now and suggest they ask at church. Never invent an "
+            "event, a date, a name or a phone number."
+        )
+
+    listed = "\n".join(describe_event(e, i) for i, e in enumerate(events, 1))
+    return (
+        "\n\n=== CHURCH EVENTS ===\n"
+        f"Today is {today}. These are the upcoming events at EIAC:\n\n"
+        f"{listed}\n\n"
+        "When someone asks about an event — when it is, where, who is running "
+        "it, who to contact — answer ONLY from this list, in their language. "
+        "Translate the details into Farsi when replying in Farsi, but keep "
+        "names and phone numbers exactly as written. Never invent an event, a "
+        "date, a name or a phone number. If they ask about something not on "
+        "the list, say it is not on the calendar."
+    )
+
 
 # --------------------------------------------------------------------------- #
 # State & Groq client
@@ -343,7 +477,9 @@ def ask_groq(chat_id: int, user_text: str) -> str:
     history.append({"role": "user", "content": user_text})
     _trim_history(chat_id)
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + conversations[chat_id]
+    # Rebuilt per question so a just-added event is answerable at once.
+    system = SYSTEM_PROMPT + events_for_prompt()
+    messages = [{"role": "system", "content": system}] + conversations[chat_id]
 
     reply = _complete(messages)
     # Strip Qwen thinking blocks — handle both closed and unclosed tags
@@ -374,6 +510,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• \"خدا محبت است\"\n\n"
         "Commands:\n"
         "/start — welcome message\n"
+        "/events — church events coming up / برنامه‌های کلیسا\n"
         "/verse — an encouraging verse\n"
         "/new — clear our conversation and start fresh\n"
         "/about — about EIAC\n"
@@ -420,6 +557,167 @@ async def about(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "May the Lord bless you. 🙏  خداوند شما را برکت دهد."
     )
     await update.message.reply_text(text)
+
+
+_ADD_EVENT_HELP = (
+    "To add an event, send it on one line with | between the parts:\n\n"
+    "/addevent Title | date | time | place | who runs it | contact\n\n"
+    "Example:\n"
+    "/addevent Christmas Service | 25/12/2026 | 6:00 PM | Church Hall | "
+    "Pastor John | 0400 123 456\n\n"
+    "Only the title and the date are required — leave the rest out if you "
+    "do not know them yet:\n"
+    "/addevent Working Bee | 11/10/2026\n\n"
+    "Dates can be 25/12/2026 or 2026-12-25.\n"
+    "The event disappears by itself the day after it happens."
+)
+
+
+def _is_event_admin(chat_id: int) -> bool:
+    return str(chat_id) in EVENT_ADMINS
+
+
+async def my_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Tell a person their own Telegram id, so they can be made an admin."""
+    await update.message.reply_text(
+        f"Your Telegram id is: {update.effective_chat.id}\n"
+        f"شناسه تلگرام شما: {update.effective_chat.id}"
+    )
+
+
+async def events_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show what is coming up. Anyone may ask."""
+    events = upcoming_events()
+
+    if not events:
+        await update.message.reply_text(
+            "There are no events on the calendar at the moment.\n"
+            "در حال حاضر هیچ برنامه‌ای در تقویم نیست."
+        )
+        return
+
+    listed = "\n\n".join(describe_event(e, i) for i, e in enumerate(events, 1))
+    await update.message.reply_text(
+        f"Upcoming at EIAC / برنامه‌های پیشِ رو\n\n{listed}\n\n"
+        f"Ask me about any of these in English or Farsi."
+    )
+
+
+async def add_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Add an event. Admins only."""
+    chat_id = update.effective_chat.id
+
+    if not EVENT_ADMINS:
+        await update.message.reply_text(
+            "No event administrator has been set up yet, so I cannot add "
+            f"events.\n\nYour Telegram id is {chat_id} — give it to whoever "
+            "looks after the bot and they can set EVENT_ADMIN_IDS."
+        )
+        return
+
+    if not _is_event_admin(chat_id):
+        await update.message.reply_text(
+            "Only the church office can add events, but you can see them all "
+            "with /events.\nفقط دفتر کلیسا می‌تواند برنامه اضافه کند."
+        )
+        return
+
+    raw = " ".join(context.args).strip()
+    if not raw:
+        await update.message.reply_text(_ADD_EVENT_HELP)
+        return
+
+    parts = [part.strip() for part in raw.split("|")]
+    title = parts[0]
+    if not title:
+        await update.message.reply_text(_ADD_EVENT_HELP)
+        return
+
+    if len(parts) < 2 or not parts[1]:
+        await update.message.reply_text(
+            "I need a date for that event.\n\n" + _ADD_EVENT_HELP
+        )
+        return
+
+    when = parse_event_date(parts[1])
+    if not when:
+        await update.message.reply_text(
+            f"I could not read \"{parts[1]}\" as a date.\n"
+            f"Try 25/12/2026 or 2026-12-25."
+        )
+        return
+
+    if date.fromisoformat(when) < today_at_church():
+        await update.message.reply_text(
+            "That date has already passed, so nobody would ever see it. "
+            "Check the year?"
+        )
+        return
+
+    def field(i: int) -> str:
+        return parts[i].strip() if len(parts) > i else ""
+
+    event = {
+        "title": title,
+        "date": when,
+        "time": field(2),
+        "location": field(3),
+        "responsible": field(4),
+        "contact": field(5),
+        "notes": field(6),
+        "added_by": str(chat_id),
+    }
+
+    events = load_events()
+    events.append(event)
+    save_events(events)
+    logger.info("Event added: %s on %s", title, when)
+
+    await update.message.reply_text(
+        "Added. People can now ask me about it.\n\n" + describe_event(event)
+    )
+
+
+async def delete_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Remove an event by its number in /events. Admins only."""
+    chat_id = update.effective_chat.id
+
+    if not _is_event_admin(chat_id):
+        await update.message.reply_text("Only the church office can remove events.")
+        return
+
+    events = upcoming_events()
+    if not events:
+        await update.message.reply_text("There is nothing on the calendar to remove.")
+        return
+
+    if not context.args:
+        listed = "\n\n".join(describe_event(e, i) for i, e in enumerate(events, 1))
+        await update.message.reply_text(
+            f"Which one? Send /delevent and its number.\n\n{listed}"
+        )
+        return
+
+    try:
+        index = int(context.args[0])
+        doomed = events[index - 1]
+        if index < 1:
+            raise IndexError
+    except (ValueError, IndexError):
+        await update.message.reply_text(
+            f"Pick a number between 1 and {len(events)} — /events shows them."
+        )
+        return
+
+    remaining = [
+        e
+        for e in load_events()
+        if not (e.get("title") == doomed["title"] and e.get("date") == doomed["date"])
+    ]
+    save_events(remaining)
+    logger.info("Event removed: %s on %s", doomed["title"], doomed["date"])
+
+    await update.message.reply_text("Removed:\n\n" + describe_event(doomed))
 
 
 # --------------------------------------------------------------------------- #
@@ -551,11 +849,19 @@ def main() -> None:
     app.add_handler(CommandHandler("new", new_conversation))
     app.add_handler(CommandHandler("verse", verse))
     app.add_handler(CommandHandler("about", about))
+    app.add_handler(CommandHandler("events", events_command))
+    app.add_handler(CommandHandler("addevent", add_event))
+    app.add_handler(CommandHandler("delevent", delete_event))
+    app.add_handler(CommandHandler("myid", my_id))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_error_handler(on_error)
 
     threading.Thread(target=_watchdog, daemon=True).start()
     logger.info("Watchdog running: Groq re-checked every %ss", HEALTH_CHECK_SECONDS)
+    logger.info(
+        "Events file: %s (%s upcoming) | admins: %s",
+        EVENTS_PATH, len(upcoming_events()), len(EVENT_ADMINS) or "none set",
+    )
 
     logger.info("Model: %s (fallbacks: %s)", _active_model,
                 ", ".join(m for m in MODELS if m != _active_model))
