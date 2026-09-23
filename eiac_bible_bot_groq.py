@@ -34,7 +34,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import httpx
-from groq import Groq
+from groq import Groq, RateLimitError
 from telegram import Update
 from telegram.constants import ChatAction
 from telegram.error import Conflict
@@ -74,6 +74,12 @@ _active_model = MODELS[0]
 # it the bot still self-heals, it just does so silently. Set ADMIN_CHAT_ID in
 # the environment to turn alerts on.
 ADMIN_CHAT_ID = os.environ.get("ADMIN_CHAT_ID")
+
+# Groq's free tier caps OUTPUT tokens per minute (1000 at the time of
+# writing). Asking for more than that in a single request is rejected
+# outright with a 429, so the ceiling has to sit below the limit - not at
+# it. 800 is still a long, unhurried answer.
+MAX_OUTPUT_TOKENS = 800
 
 # How often the watchdog re-checks that Groq still serves our model.
 HEALTH_CHECK_SECONDS = 600
@@ -245,7 +251,13 @@ def save_events(events: list[dict]) -> None:
 
 
 def upcoming_events() -> list[dict]:
-    """Events still to come, soonest first. An event stays listed all its own day."""
+    """Events still to come, soonest first.
+
+    A one-off stays listed all through its own day. Something that runs for a
+    while - a term of classes, a window for handing in forms - carries an
+    "until" date and stays listed until that day passes, so it does not vanish
+    after its first session.
+    """
     today = today_at_church()
     live = []
     for event in load_events():
@@ -253,7 +265,11 @@ def upcoming_events() -> list[dict]:
             when = date.fromisoformat(event["date"])
         except (KeyError, ValueError):
             continue
-        if when >= today:
+        try:
+            last_day = date.fromisoformat(event["until"])
+        except (KeyError, ValueError, TypeError):
+            last_day = when
+        if max(when, last_day) >= today:
             live.append(event)
     return sorted(live, key=lambda e: e["date"])
 
@@ -275,6 +291,17 @@ def describe_event(event: dict, index: int | None = None) -> str:
     head = when.strftime("%A %d %B %Y")
     if event.get("time"):
         head += f", {event['time']}"
+
+    if event.get("until"):
+        try:
+            ends = date.fromisoformat(event["until"])
+            if ends > when:
+                started = "started " if when < today_at_church() else "from "
+                head = f"{started}{when.strftime('%A %d %B')}, until {ends.strftime('%d %B %Y')}"
+                if event.get("time"):
+                    head += f" — {event['time']}"
+        except ValueError:
+            pass
 
     label = f"{index}. " if index is not None else ""
     lines = [f"{label}{event['title']} — {head}"]
@@ -337,6 +364,10 @@ def _trim_history(chat_id: int) -> None:
     history = conversations.get(chat_id, [])
     if len(history) > MAX_HISTORY_MESSAGES:
         conversations[chat_id] = history[-MAX_HISTORY_MESSAGES:]
+
+
+class BusyError(Exception):
+    """Every model was rate limited. Worth telling the person to retry."""
 
 
 def _model_retired(exc: Exception) -> bool:
@@ -450,8 +481,13 @@ def _complete(messages: list[dict[str, str]]) -> str:
                 model=model,
                 messages=messages,
                 temperature=0.6,
-                max_tokens=1024,
+                max_tokens=MAX_OUTPUT_TOKENS,
             )
+        except RateLimitError as exc:
+            # Each model has its own budget, so a neighbour may have room.
+            logger.warning("%s is rate limited — trying the next model", model)
+            last_error = exc
+            continue
         except Exception as exc:  # noqa: BLE001 — re-raised unless it is a dead model
             if not _model_retired(exc):
                 raise
@@ -464,6 +500,9 @@ def _complete(messages: list[dict[str, str]]) -> str:
             _active_model = model
         # Reasoning models can return None content alongside a `reasoning` field.
         return (completion.choices[0].message.content or "").strip()
+
+    if isinstance(last_error, RateLimitError):
+        raise BusyError() from last_error
 
     raise RuntimeError(
         "Groq is serving none of the models in MODELS — the list needs updating. "
@@ -540,6 +579,8 @@ async def verse(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "I have been using with you (default to English if unsure).",
         )
         await update.message.reply_text(reply)
+    except BusyError:
+        await update.message.reply_text(_BUSY_REPLY)
     except Exception:  # noqa: BLE001 — surface a friendly message, log the detail
         logger.exception("Groq call failed in /verse")
         await update.message.reply_text(_ERROR_REPLY)
@@ -724,6 +765,12 @@ async def delete_event(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 # Message handler
 # --------------------------------------------------------------------------- #
 
+_BUSY_REPLY = (
+    "A lot of people are asking me at once. Please ask again in a minute.\n"
+    "تعداد پرسش‌ها زیاد است. لطفاً یک دقیقه دیگر دوباره بپرسید."
+)
+
+
 _ERROR_REPLY = (
     "I'm sorry — I had trouble answering just now. Please try again in a moment.\n"
     "متأسفم — در پاسخ‌دادن مشکلی پیش آمد. لطفاً لحظه‌ای بعد دوباره تلاش کنید."
@@ -738,16 +785,22 @@ def _is_farsi(text: str) -> bool:
 def _build_prompt(user_text: str) -> str:
     words = user_text.strip().split()
     lang = "Farsi/Persian" if _is_farsi(user_text) else "English"
+    script = "Persian/Farsi" if _is_farsi(user_text) else "English"
 
     if len(words) <= 3:
         return (
             f"The user sent a very short message: '{user_text}'\n"
-            f"This appears to be a Bible keyword or topic search.\n"
             f"IMPORTANT: Reply ONLY in {lang}. Do NOT use Chinese, Japanese, "
-            f"Korean, or any other script. Use ONLY {'Persian/Farsi' if _is_farsi(user_text) else 'English'} script.\n"
-            f"Follow the SINGLE WORD handling instructions in your system prompt: "
-            f"acknowledge the word, list 3-5 Bible references with one-line descriptions, "
-            f"then ask which one the user wants to explore."
+            f"Korean, or any other script. Use ONLY {script} script.\n"
+            f"FIRST decide which kind of question this is:\n"
+            f"(a) If it is about CHURCH EVENTS — a service, a class, a program, "
+            f"a date, who runs something, who to contact — answer from the "
+            f"CHURCH EVENTS list in your system prompt. Do NOT treat it as a "
+            f"Bible keyword and do NOT offer Bible verses instead.\n"
+            f"(b) Otherwise treat it as a Bible keyword or topic search, and "
+            f"follow the SINGLE WORD handling instructions in your system "
+            f"prompt: acknowledge the word, list 3-5 Bible references with "
+            f"one-line descriptions, then ask which one they want to explore."
         )
     return user_text
 
@@ -772,6 +825,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
             reply = ask_groq(chat_id, retry_prompt)
         await update.message.reply_text(reply)
+    except BusyError:
+        await update.message.reply_text(_BUSY_REPLY)
     except Exception:  # noqa: BLE001
         logger.exception("Groq call failed while handling a message")
         await update.message.reply_text(_ERROR_REPLY)
